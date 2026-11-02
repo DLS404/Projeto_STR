@@ -1,0 +1,140 @@
+{
+  "version": 1,
+  "author": "Projeto de Monitoramento de Gás",
+  "editor": "wokwi",
+  "parts": [
+    {
+      "type": "board-esp32-devkit-c-v4",
+      "id": "esp",
+      "top": -10,
+      "left": -10,
+      "attrs": {}
+    },
+    {
+      "type": "wokwi-gas-sensor",
+      "id": "mq2",
+      "top": -20,
+      "left": 300,
+      "attrs": {}
+    },
+    {
+      "type": "wokwi-dht22",
+      "id": "dht",
+      "top": 180,
+      "left": 310,
+      "attrs": {}
+    },
+    {
+      "type": "wokwi-pushbutton",
+      "id": "btn",
+      "top": 190,
+      "left": -180,
+      "attrs": {
+        "color": "blue",
+        "xray": "1"
+      }
+    },
+    {
+      "type": "wokwi-led",
+      "id": "ledG",
+      "top": -160,
+      "left": -180,
+      "attrs": {
+        "color": "green"
+      }
+    },
+    {
+      "type": "wokwi-led",
+      "id": "ledY",
+      "top": -100,
+      "left": -180,
+      "attrs": {
+        "color": "yellow"
+      }
+    },
+    {
+      "type": "wokwi-led",
+      "id": "ledR",
+      "top": -40,
+      "left": -180,
+      "attrs": {
+        "color": "red"
+      }
+    },
+    {
+      "type": "wokwi-buzzer",
+      "id": "buzz",
+      "top": 290,
+      "left": -160,
+      "attrs": {
+        "volume": "0.1"
+      }
+    },
+    {
+      "type": "wokwi-servo",
+      "id": "servo",
+      "top": 330,
+      "left": 300,
+      "attrs": {}
+    },
+    {
+      "type": "wokwi-resistor",
+      "id": "rG",
+      "top": -165,
+      "left": -85,
+      "attrs": {
+        "value": "220"
+      }
+    },
+    {
+      "type": "wokwi-resistor",
+      "id": "rY",
+      "top": -105,
+      "left": -85,
+      "attrs": {
+        "value": "220"
+      }
+    },
+    {
+      "type": "wokwi-resistor",
+      "id": "rR",
+      "top": -45,
+      "left": -85,
+      "attrs": {
+        "value": "220"
+      }
+    }
+  ],
+  "connections": [
+    ["esp:3V3", "dht:VCC", "red", []],
+    ["esp:GND.1", "dht:GND", "black", []],
+    ["esp:4", "dht:SDA", "green", []],
+
+    ["esp:5V", "mq2:VCC", "red", []],
+    ["esp:GND.2", "mq2:GND", "black", []],
+    ["mq2:AOUT", "esp:34", "orange", []],
+
+    ["esp:33", "btn:1.l", "green", []],
+    ["btn:2.l", "esp:GND.3", "black", []],
+
+    ["esp:25", "rG:1", "green", []],
+    ["rG:2", "ledG:A", "green", []],
+    ["ledG:C", "esp:GND.1", "black", []],
+
+    ["esp:26", "rY:1", "green", []],
+    ["rY:2", "ledY:A", "green", []],
+    ["ledY:C", "esp:GND.1", "black", []],
+
+    ["esp:27", "rR:1", "green", []],
+    ["rR:2", "ledR:A", "green", []],
+    ["ledR:C", "esp:GND.1", "black", []],
+
+    ["esp:14", "buzz:1", "purple", []],
+    ["buzz:2", "esp:GND.2", "black", []],
+
+    ["esp:13", "servo:PWM", "purple", []],
+    ["esp:5V", "servo:V+", "red", []],
+    ["esp:GND.2", "servo:GND", "black", []]
+  ],
+  "dependencies": {}
+}
