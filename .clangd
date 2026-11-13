@@ -1,2 +1,12 @@
 CompileFlags:
-    Remove: [-f*, -m*]
+  CompilationDatabase: build
+  Remove:
+    - -mlongcalls
+    - -mtext-section-literals
+    - -mdisable-hardware-atomics
+    - -fstrict-volatile-bitfields
+    - -fno-tree-switch-conversion
+    - -fno-shrink-wrap
+    - -fno-malloc-dce
+    - -fzero-init-padding-bits=*
+    - -fno-jump-tables

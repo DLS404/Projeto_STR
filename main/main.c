@@ -1,9 +1,6 @@
-
-#include <stdio.h>
 #include <stdlib.h>
 #include <stdbool.h>
 #include <stdint.h>
-#include <math.h>
 #include <inttypes.h>
 
 #include "freertos/FreeRTOS.h"
@@ -45,7 +42,6 @@
 #define PERIODO_DHT_MS   2000
 
 /* 1 = T4 ligada | 0 = T4 desligada */
-#define HABILITAR_T4     0
 
 #define BUZZER_FREQ      2000
 
