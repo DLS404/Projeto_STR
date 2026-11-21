@@ -43,7 +43,7 @@
 #define PERIODO_DHT_MS   2000
 
 /* 1 = T4 ligada | 0 = T4 desligada */
-#define HABILITAR_T4 1
+#define HABILITAR_T4     0
 
 #define BUZZER_FREQ      2000
 
@@ -78,6 +78,23 @@ typedef struct {
     int64_t instante_origem_us;
 } comando_t;
 
+/*
+ * Acumulador estatistico de uma grandeza (em microssegundos).
+ * Guarda o necessario para calcular minimo, maximo, media e
+ * desvio padrao sem precisar armazenar cada amostra.
+ *
+ * As somas usam inteiros de 64 bits para evitar operacoes em
+ * ponto flutuante dentro das secoes criticas. A media e o desvio
+ * padrao sao calculados apenas na impressao.
+ */
+typedef struct {
+    uint64_t n;          /* quantidade de amostras */
+    int64_t  minimo;     /* menor valor observado */
+    int64_t  maximo;     /* maior valor observado */
+    uint64_t soma;       /* soma dos valores */
+    uint64_t soma_q;     /* soma dos quadrados dos valores */
+} metrica_t;
+
 typedef struct {
     uint64_t leituras_mq2;
 
@@ -100,13 +117,12 @@ typedef struct {
     uint32_t ocupacao_max_fila_leituras;
     uint32_t ocupacao_max_fila_comandos;
 
-    int64_t intervalo_max_mq2_us;
-    int64_t intervalo_max_dht_us;
-
-    int64_t execucao_max_t2_us;
-    int64_t latencia_max_rt02_us;
-    int64_t latencia_max_rt03_us;
-    int64_t execucao_max_t4_us;
+    metrica_t intervalo_mq2;   /* RT01: periodo entre aquisicoes da T1 */
+    metrica_t intervalo_dht;   /* periodo entre leituras do DHT22 */
+    metrica_t exec_t2;         /* tempo de execucao da classificacao */
+    metrica_t rt02;            /* latencia aquisicao -> fim da classificacao */
+    metrica_t rt03;            /* latencia aquisicao -> fim da atuacao */
+    metrica_t exec_t4;         /* duracao de cada bloco da T4 */
 
 } estatisticas_t;
 
@@ -136,16 +152,26 @@ static estatisticas_t stats = {0};
 
 /* =========================================================
    ESTATISTICAS - FUNCOES AUXILIARES
+   Chamar sempre dentro de taskENTER_CRITICAL(&stats_mux)
    ========================================================= */
 
-static void atualizar_maximo(
-    int64_t *destino,
-    int64_t valor
-)
+static void registrar_metrica(metrica_t *m, int64_t valor)
 {
-    if (valor > *destino) {
-        *destino = valor;
+    if (valor < 0) {
+        valor = 0;
     }
+
+    if (m->n == 0 || valor < m->minimo) {
+        m->minimo = valor;
+    }
+
+    if (m->n == 0 || valor > m->maximo) {
+        m->maximo = valor;
+    }
+
+    m->n++;
+    m->soma   += (uint64_t)valor;
+    m->soma_q += (uint64_t)(valor * valor);
 }
 
 static void registrar_ocupacao(
@@ -178,6 +204,44 @@ static void registrar_ocupacao(
    IMPRESSAO DAS ESTATISTICAS
    ========================================================= */
 
+/*
+ * Imprime uma linha por metrica no formato:
+ * METRICA: n=... | min=... | media=... | desvio=... | max=... (us)
+ */
+static void imprimir_metrica(const char *nome, const metrica_t *m)
+{
+    if (m->n == 0) {
+        ESP_LOGI(TAG, "%s: n=0 | sem amostras", nome);
+        return;
+    }
+
+    double media = (double)m->soma / (double)m->n;
+
+    double variancia =
+        ((double)m->soma_q / (double)m->n) - (media * media);
+
+    if (variancia < 0.0) {
+        variancia = 0.0;
+    }
+
+    double desvio = sqrt(variancia);
+
+    ESP_LOGI(
+        TAG,
+        "%s: n=%" PRIu64
+        " | min=%" PRId64
+        " | media=%.1f"
+        " | desvio=%.1f"
+        " | max=%" PRId64 " us",
+        nome,
+        m->n,
+        m->minimo,
+        media,
+        desvio,
+        m->maximo
+    );
+}
+
 static void imprimir_estatisticas(void)
 {
     estatisticas_t copia;
@@ -190,45 +254,42 @@ static void imprimir_estatisticas(void)
 
     ESP_LOGI(
         TAG,
-        "MQ2: leituras=%" PRIu64
-        " | intervalo_max=%" PRId64 " us",
-        copia.leituras_mq2,
-        copia.intervalo_max_mq2_us
+        "MQ2: leituras=%" PRIu64,
+        copia.leituras_mq2
     );
+
+    imprimir_metrica("RT01 intervalo MQ2", &copia.intervalo_mq2);
 
     ESP_LOGI(
         TAG,
-        "RT01: limite=%" PRId64 " us"
-        " | violacoes=%" PRIu64,
+        "RT01: limite=%" PRId64 " us | violacoes=%" PRIu64,
         RT01_LIMITE_US,
         copia.violacoes_rt01
     );
 
     ESP_LOGI(
         TAG,
-        "T2: classificacoes=%" PRIu64
-        " | execucao_max=%" PRId64 " us",
-        copia.classificacoes,
-        copia.execucao_max_t2_us
+        "T2: classificacoes=%" PRIu64,
+        copia.classificacoes
     );
+
+    imprimir_metrica("T2 execucao", &copia.exec_t2);
+
+    imprimir_metrica("RT02 latencia", &copia.rt02);
 
     ESP_LOGI(
         TAG,
-        "RT02: limite=%" PRId64 " us"
-        " | latencia_max=%" PRId64 " us"
-        " | violacoes=%" PRIu64,
+        "RT02: limite=%" PRId64 " us | violacoes=%" PRIu64,
         RT02_LIMITE_US,
-        copia.latencia_max_rt02_us,
         copia.violacoes_rt02
     );
 
+    imprimir_metrica("RT03 latencia", &copia.rt03);
+
     ESP_LOGI(
         TAG,
-        "RT03: limite=%" PRId64 " us"
-        " | latencia_max=%" PRId64 " us"
-        " | violacoes=%" PRIu64,
+        "RT03: limite=%" PRId64 " us | violacoes=%" PRIu64,
         RT03_LIMITE_US,
-        copia.latencia_max_rt03_us,
         copia.violacoes_rt03
     );
 
@@ -251,22 +312,22 @@ static void imprimir_estatisticas(void)
     ESP_LOGI(
         TAG,
         "DHT22: sucesso=%" PRIu64
-        " | erros=%" PRIu64
-        " | intervalo_max=%" PRId64 " us",
+        " | erros=%" PRIu64,
         copia.leituras_dht_ok,
-        copia.leituras_dht_erro,
-        copia.intervalo_max_dht_us
+        copia.leituras_dht_erro
     );
+
+    imprimir_metrica("DHT22 intervalo", &copia.intervalo_dht);
 
     ESP_LOGI(
         TAG,
         "T4: ciclos=%" PRIu64
-        " | operacoes=%" PRIu64
-        " | execucao_max=%" PRId64 " us",
+        " | operacoes=%" PRIu64,
         copia.ciclos_t4,
-        copia.operacoes_t4,
-        copia.execucao_max_t4_us
+        copia.operacoes_t4
     );
+
+    imprimir_metrica("T4 bloco", &copia.exec_t4);
 
     ESP_LOGI(TAG, "==================================");
 }
@@ -656,7 +717,7 @@ static void tarefa_aquisicao(void *arg)
 
         int64_t inicio = esp_timer_get_time();
 
-        /* Medicao do intervalo entre aquisicoes */
+        /* Intervalo entre aquisicoes (RT01) */
 
         if (inicio_anterior != 0) {
 
@@ -665,8 +726,8 @@ static void tarefa_aquisicao(void *arg)
 
             taskENTER_CRITICAL(&stats_mux);
 
-            atualizar_maximo(
-                &stats.intervalo_max_mq2_us,
+            registrar_metrica(
+                &stats.intervalo_mq2,
                 intervalo
             );
 
@@ -754,7 +815,7 @@ static void tarefa_classificacao(void *arg)
 
             int64_t execucao_us = fim - inicio;
 
-            /* Latencia da aquisicao ate o fim da classificacao */
+            /* Latencia da aquisicao ate o fim da classificacao (RT02) */
 
             int64_t latencia_us =
                 fim - leitura.instante_us;
@@ -763,13 +824,13 @@ static void tarefa_classificacao(void *arg)
 
             stats.classificacoes++;
 
-            atualizar_maximo(
-                &stats.execucao_max_t2_us,
+            registrar_metrica(
+                &stats.exec_t2,
                 execucao_us
             );
 
-            atualizar_maximo(
-                &stats.latencia_max_rt02_us,
+            registrar_metrica(
+                &stats.rt02,
                 latencia_us
             );
 
@@ -818,8 +879,22 @@ static void tarefa_classificacao(void *arg)
    T3 - ATUACAO
    ========================================================= */
 
+/*
+ * Atua nos LEDs, servo e buzzer a cada comando recebido.
+ * O log so e impresso quando o estado muda, para evitar
+ * poluir o monitor serial com uma linha a cada 100 ms.
+ */
 static void aplicar_estado(const comando_t *cmd)
 {
+    static bool primeira_vez = true;
+
+    estado_t anterior = estado_atual;
+
+    bool mudou_estado =
+        primeira_vez || (anterior != cmd->estado);
+
+    primeira_vez = false;
+
     estado_atual = cmd->estado;
 
     /* LEDs */
@@ -858,17 +933,22 @@ static void aplicar_estado(const comando_t *cmd)
 
     atualizar_buzzer();
 
-    ESP_LOGI(
-        TAG,
-        "MQ2=%d | estado=%s | buzzer=%s",
-        cmd->valor_mq2,
+    /* Log apenas na troca de estado */
 
-        cmd->estado == ESTADO_NORMAL ? "NORMAL" :
-        cmd->estado == ESTADO_ALERTA ? "ALERTA" :
-        "CRITICO",
+    if (mudou_estado) {
 
-        buzzer_silenciado ? "SILENCIADO" : "HABILITADO"
-    );
+        ESP_LOGI(
+            TAG,
+            "MUDANCA: MQ2=%d | estado=%s | buzzer=%s",
+            cmd->valor_mq2,
+
+            cmd->estado == ESTADO_NORMAL ? "NORMAL" :
+            cmd->estado == ESTADO_ALERTA ? "ALERTA" :
+            "CRITICO",
+
+            buzzer_silenciado ? "SILENCIADO" : "HABILITADO"
+        );
+    }
 }
 
 static void tarefa_atuacao(void *arg)
@@ -901,8 +981,8 @@ static void tarefa_atuacao(void *arg)
 
             stats.atuacoes++;
 
-            atualizar_maximo(
-                &stats.latencia_max_rt03_us,
+            registrar_metrica(
+                &stats.rt03,
                 latencia_us
             );
 
@@ -924,6 +1004,11 @@ static void tarefa_dht22(void *arg)
     float temperatura = 0.0f;
     float umidade = 0.0f;
 
+    /* Ultimos valores impressos, para nao repetir a mesma linha */
+    float ult_temperatura = 0.0f;
+    float ult_umidade = 0.0f;
+    bool  ja_impresso = false;
+
     int64_t inicio_anterior = 0;
 
     while (1) {
@@ -939,8 +1024,8 @@ static void tarefa_dht22(void *arg)
 
             taskENTER_CRITICAL(&stats_mux);
 
-            atualizar_maximo(
-                &stats.intervalo_max_dht_us,
+            registrar_metrica(
+                &stats.intervalo_dht,
                 intervalo
             );
 
@@ -964,12 +1049,23 @@ static void tarefa_dht22(void *arg)
 
         if (resultado == 0) {
 
-            ESP_LOGI(
-                TAG,
-                "DHT22 | Temperatura: %.1f C | Umidade: %.1f%%",
-                temperatura,
-                umidade
-            );
+            /* Imprime apenas quando temperatura ou umidade mudam */
+
+            if (!ja_impresso ||
+                fabsf(temperatura - ult_temperatura) > 0.05f ||
+                fabsf(umidade - ult_umidade) > 0.05f) {
+
+                ESP_LOGI(
+                    TAG,
+                    "DHT22 | Temperatura: %.1f C | Umidade: %.1f%%",
+                    temperatura,
+                    umidade
+                );
+
+                ult_temperatura = temperatura;
+                ult_umidade = umidade;
+                ja_impresso = true;
+            }
 
         } else if (resultado == -1) {
 
@@ -1072,27 +1168,20 @@ static void tarefa_carga(void *arg)
 
         int64_t duracao = fim - inicio;
 
+        /* Os dados vao apenas para o relatorio periodico */
+
         taskENTER_CRITICAL(&stats_mux);
 
         stats.ciclos_t4++;
 
         stats.operacoes_t4 += 10000;
 
-        atualizar_maximo(
-            &stats.execucao_max_t4_us,
+        registrar_metrica(
+            &stats.exec_t4,
             duracao
         );
 
         taskEXIT_CRITICAL(&stats_mux);
-
-        ESP_LOGI(
-            TAG,
-            "T4 carga ativa | operacoes=10000"
-            " | resultado=%.4f"
-            " | duracao=%" PRId64 " us",
-            (double)resultado,
-            duracao
-        );
 
         vTaskDelay(
             pdMS_TO_TICKS(10)
